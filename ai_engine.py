@@ -126,3 +126,70 @@ def stream_mock_interview(resume_text, jd_text):
                 yield chunk.choices[0].delta.content
     except Exception as e:
         yield f"\n[Stream Error: {str(e)}]"
+
+# --- 5. NEW FEATURE: Career Discovery Engine ---
+def recommend_job_profiles(resume_text):
+    prompt = f"""
+    You are an elite Tech Recruiter. Analyze this resume and recommend the top 3 job titles this candidate should apply for.
+    Look for "Bridge" roles if they have mixed experience (e.g., Tech + Business).
+    
+    CRITICAL RULE: Return ONLY a raw JSON object. No markdown, no intro text.
+    Format required:
+    {{
+      "profiles": [
+        {{"title": "Job Title 1", "reason": "1 sentence explaining why their specific skills match this."}},
+        {{"title": "Job Title 2", "reason": "1 sentence explaining why their specific skills match this."}},
+        {{"title": "Job Title 3", "reason": "1 sentence explaining why their specific skills match this."}}
+      ]
+    }}
+    
+    Resume:
+    {resume_text[:3000]}
+    """
+    
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a precise JSON generator. Output only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            model=MODEL_NAME,
+            temperature=0.3,
+        )
+        
+        response_text = chat_completion.choices[0].message.content
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return {"profiles": []}
+            
+    except Exception as e:
+        print(f"AI Recommendation Error: {e}")
+        return {"profiles": []}
+
+# --- 6. NEW FEATURE: STREAMING Cold Email ---
+def stream_cold_email(resume_text, jd_text):
+    prompt = f"""
+    You are an expert career strategist. Write a short, punchy, 3-sentence cold email to a Recruiter or Hiring Manager for the provided job description, highlighting the best matching skills from the resume.
+    CRITICAL RULES:
+    1. Keep it strictly under 100 words.
+    2. Make it engaging, confident, and professional.
+    3. Include a clear call to action (e.g., asking for a brief 10-minute chat).
+    4. DO NOT output any XML tags, subject lines, or conversational filler. Output the email body immediately.
+    
+    Resume: {resume_text[:2000]}
+    JD: {jd_text[:2000]}
+    """
+    
+    try:
+        stream = client.chat.completions.create(
+            messages=[{"role": "system", "content": "You are a master of concise LinkedIn outreach."}, {"role": "user", "content": prompt}],
+            model=MODEL_NAME,
+            temperature=0.6,
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+    except Exception as e:
+        yield f"\n[Stream Error: {str(e)}]"

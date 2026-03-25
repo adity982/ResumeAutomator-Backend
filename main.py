@@ -9,11 +9,12 @@ import time  # <--- For Cache
 from sqlalchemy.orm import Session
 from fastapi import Depends
 from database import get_db, User, SavedResume
+import urllib.parse # <--- NEW: For building live search URLs
 
-# Import your custom logic (Now using the streaming functions!)
+# Import your custom logic (Now using the streaming functions, career discovery, & cold email!)
 from parser import extract_text_from_pdf, improved_parse
 from scraper import scrape_job_description
-from ai_engine import analyze_match, stream_rewrite_resume, stream_cover_letter, stream_mock_interview
+from ai_engine import analyze_match, stream_rewrite_resume, stream_cover_letter, stream_mock_interview, recommend_job_profiles, stream_cold_email
 
 app = FastAPI(title="Resume Automator - Final BTech Version")
 
@@ -33,8 +34,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 SCRAPE_CACHE = {}
 CACHE_TTL = 600  # 10 minutes
 
-# --- HELPER: 5-Theme PDF Generator ---
-def create_pdf_bytes(text_input, template="standard"):
+# --- HELPER: 5-Theme PDF Generator (UPDATED for Cover Letters) ---
+def create_pdf_bytes(text_input, template="standard", header_title="TAILORED RESUME"):
     """A bulletproof PDF generator with 5 professional theme supports."""
     pdf = FPDF()
     pdf.add_page()
@@ -69,10 +70,10 @@ def create_pdf_bytes(text_input, template="standard"):
         text_color, header_color = (0, 0, 0), (0, 0, 0) # Pure black
         align_header = "L"
 
-    # Add a stylized visual header based on the theme
+    # Add a stylized visual header based on the theme and document type
     pdf.set_font(font_family, style="B", size=14)
     pdf.set_text_color(*header_color)
-    pdf.cell(0, 12, "TAILORED RESUME", ln=True, align=align_header)
+    pdf.cell(0, 12, header_title, ln=True, align=align_header)
 
     # Set the body text styling
     pdf.set_font(font_family, size=base_size)
@@ -149,21 +150,25 @@ async def tailor(payload: dict = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- ENDPOINT 5: Download PDF ---
+# --- ENDPOINT 5: Download PDF (UPDATED to handle Cover Letters) ---
 @app.post("/download_resume")
 async def download_resume(payload: dict = Body(...)):
     tailored_text = payload.get("text", "")
     template_choice = payload.get("template", "standard") 
+    doc_type = payload.get("doc_type", "Resume") # NEW: Tells backend what we are printing
     
     if not tailored_text:
         raise HTTPException(status_code=400, detail="No text content found.")
     try:
-        pdf_bytes = create_pdf_bytes(tailored_text, template=template_choice)
+        # Dynamically set the title based on the doc_type
+        header_title = "TAILORED RESUME" if doc_type == "Resume" else "COVER LETTER"
+        
+        pdf_bytes = create_pdf_bytes(tailored_text, template=template_choice, header_title=header_title)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f"attachment; filename=Resume_{template_choice.capitalize()}.pdf",
+                "Content-Disposition": f"attachment; filename={doc_type.replace(' ', '_')}_{template_choice.capitalize()}.pdf",
                 "Access-Control-Expose-Headers": "Content-Disposition"
             }
         )
@@ -224,6 +229,44 @@ async def generate_interview(payload: dict = Body(...)):
         resume_text = payload.get("resume_text")
         jd_text = payload.get("jd_text")
         return StreamingResponse(stream_mock_interview(resume_text, jd_text), media_type="text/plain")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- ENDPOINT 10: Career Discovery Engine ---
+@app.post("/discover_jobs")
+async def discover_jobs(payload: dict = Body(...)):
+    try:
+        resume_text = payload.get("resume_text")
+        if not resume_text:
+            raise HTTPException(status_code=400, detail="Resume text is required.")
+            
+        # 1. Get titles from AI
+        ai_response = recommend_job_profiles(resume_text)
+        
+        # 2. Programmatically build guaranteed-live search URLs
+        enriched_profiles = []
+        for profile in ai_response.get("profiles", []):
+            title = profile.get("title", "")
+            url_encoded_title = urllib.parse.quote(title)
+            
+            profile["links"] = {
+                "LinkedIn": f"https://www.linkedin.com/jobs/search/?keywords={url_encoded_title}",
+                "WeWorkRemotely": f"https://weworkremotely.com/remote-jobs/search?term={url_encoded_title}",
+                "Indeed": f"https://www.indeed.com/jobs?q={url_encoded_title}"
+            }
+            enriched_profiles.append(profile)
+            
+        return {"status": "success", "recommendations": enriched_profiles}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- ENDPOINT 11: STREAMING Cold Email Generator ---
+@app.post("/generate_cold_email")
+async def generate_cold_email(payload: dict = Body(...)):
+    try:
+        resume_text = payload.get("resume_text")
+        jd_text = payload.get("jd_text")
+        return StreamingResponse(stream_cold_email(resume_text, jd_text), media_type="text/plain")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
