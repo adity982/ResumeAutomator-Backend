@@ -1,0 +1,1 @@
+"""Resume Automator application package."""
