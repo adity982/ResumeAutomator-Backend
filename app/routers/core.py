@@ -225,11 +225,28 @@ def analyze_match(
         dimensions=[item.model_dump() for item in result.dimensions],
         gap_plan=[item.model_dump() for item in result.gap_plan],
         methodology_version=result.methodology_version,
+        input_fingerprint=result.input_fingerprint,
+        methodology=result.methodology,
     )
     db.add(record)
     db.commit()
     db.refresh(record)
     return result.model_copy(update={"id": record.id})
+
+
+@router.get("/analysis/history", response_model=list[schemas.AnalysisHistoryRead])
+def analysis_history(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    return (
+        db.query(models.AnalysisRecord)
+        .filter(models.AnalysisRecord.user_uid == auth.uid)
+        .order_by(models.AnalysisRecord.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 @router.post("/analysis/batch", response_model=list[schemas.BatchAnalysisItem])
@@ -245,6 +262,68 @@ def tailor_resume(payload: schemas.TailorRequest, auth: schemas.AuthUser = Depen
 @router.post("/ai/cover-letter", response_model=schemas.GeneratedText)
 def generate_cover_letter(payload: schemas.CoverLetterRequest, auth: schemas.AuthUser = Depends(get_current_user)):
     return schemas.GeneratedText(text=ai.cover_letter(payload.resume_text, payload.jd_text, payload.company, payload.role))
+
+
+@router.post("/evidence", response_model=schemas.CareerEvidenceRead, status_code=201)
+def create_evidence(
+    payload: schemas.CareerEvidenceCreate,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    ensure_user(db, auth)
+    item = models.CareerEvidence(user_uid=auth.uid, **payload.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.get("/evidence", response_model=list[schemas.CareerEvidenceRead])
+def list_evidence(
+    verified: bool | None = None,
+    search: str = Query(default="", max_length=120),
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    query = db.query(models.CareerEvidence).filter(models.CareerEvidence.user_uid == auth.uid)
+    if verified is not None:
+        query = query.filter(models.CareerEvidence.verified == verified)
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            (models.CareerEvidence.title.ilike(pattern))
+            | (models.CareerEvidence.statement.ilike(pattern))
+        )
+    return query.order_by(models.CareerEvidence.updated_at.desc()).limit(200).all()
+
+
+@router.patch("/evidence/{evidence_id}", response_model=schemas.CareerEvidenceRead)
+def update_evidence(
+    evidence_id: int,
+    payload: schemas.CareerEvidenceUpdate,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    item = owned(db, models.CareerEvidence, evidence_id, auth)
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("tags") is not None:
+        changes["tags"] = list(dict.fromkeys(tag.strip().lower() for tag in changes["tags"] if tag.strip()))
+    for key, value in changes.items():
+        setattr(item, key, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/evidence/{evidence_id}", status_code=204)
+def delete_evidence(
+    evidence_id: int,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    db.delete(owned(db, models.CareerEvidence, evidence_id, auth))
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.delete("/account", status_code=204)

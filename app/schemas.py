@@ -134,6 +134,21 @@ class AnalysisResult(BaseModel):
     dimensions: list[Dimension]
     gap_plan: list[GapAction]
     methodology_version: str
+    input_fingerprint: str
+    methodology: dict[str, Any]
+
+
+class AnalysisHistoryRead(ORMModel):
+    id: int
+    job_id: int | None
+    document_id: int | None
+    score: float
+    dimensions: list[dict[str, Any]]
+    gap_plan: list[dict[str, Any]]
+    methodology_version: str
+    input_fingerprint: str
+    methodology: dict[str, Any]
+    created_at: dt.datetime
 
 
 class BatchTarget(BaseModel):
@@ -232,6 +247,7 @@ class InterviewRead(ORMModel):
     interview_type: str
     questions: list[dict[str, Any]]
     answers: list[dict[str, Any]]
+    prep_brief: dict[str, Any]
     status: str
     created_at: dt.datetime
     updated_at: dt.datetime
@@ -282,6 +298,92 @@ class SearchRead(ORMModel):
     results: list[dict[str, Any]]
     created_at: dt.datetime
     updated_at: dt.datetime
+
+
+EvidenceCategory = Literal["achievement", "skill", "project", "education", "certification", "story"]
+
+
+class CareerEvidenceCreate(BaseModel):
+    category: EvidenceCategory
+    title: str = Field(min_length=1, max_length=240)
+    statement: str = Field(min_length=10, max_length=10_000)
+    source: str = Field(default="", max_length=500)
+    verified: bool = False
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item.strip().lower() for item in value if item.strip()))
+
+
+class CareerEvidenceUpdate(BaseModel):
+    category: EvidenceCategory | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    statement: str | None = Field(default=None, min_length=10, max_length=10_000)
+    source: str | None = Field(default=None, max_length=500)
+    verified: bool | None = None
+    tags: list[str] | None = Field(default=None, max_length=20)
+
+
+class CareerEvidenceRead(ORMModel):
+    id: int
+    category: str
+    title: str
+    statement: str
+    source: str
+    verified: bool
+    tags: list[str]
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+TaskType = Literal["follow_up", "interview", "deadline", "networking", "thank_you", "custom"]
+
+
+class FollowUpTaskCreate(BaseModel):
+    application_id: int
+    task_type: TaskType = "follow_up"
+    title: str = Field(min_length=1, max_length=240)
+    due_at: dt.datetime
+    notes: str = Field(default="", max_length=5_000)
+
+
+class FollowUpTaskUpdate(BaseModel):
+    task_type: TaskType | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    due_at: dt.datetime | None = None
+    notes: str | None = Field(default=None, max_length=5_000)
+    completed: bool | None = None
+
+
+class FollowUpTaskRead(ORMModel):
+    id: int
+    application_id: int
+    task_type: str
+    title: str
+    due_at: dt.datetime
+    notes: str
+    completed_at: dt.datetime | None
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class PackageChecklistItem(BaseModel):
+    key: str
+    label: str
+    ready: bool
+    detail: str
+
+
+class ApplicationPackageRead(BaseModel):
+    application_id: int
+    readiness_score: float = Field(ge=0, le=100)
+    ready_count: int
+    total_count: int
+    checklist: list[PackageChecklistItem]
+    resume: DocumentRead | None = None
+    cover_letter: DocumentRead | None = None
 
 
 class AnalyticsSummary(BaseModel):

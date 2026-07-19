@@ -71,6 +71,34 @@ def application_events(application_id: int, db: Session = Depends(get_db), auth:
     return db.query(models.ApplicationEvent).filter(models.ApplicationEvent.application_id == application_id, models.ApplicationEvent.user_uid == auth.uid).order_by(models.ApplicationEvent.created_at.asc()).all()
 
 
+@router.get("/applications/{application_id}/package", response_model=schemas.ApplicationPackageRead)
+def application_package(
+    application_id: int,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    application = owned(db, models.Application, application_id, auth)
+    resume = owned(db, models.DocumentVersion, application.resume_document_id, auth) if application.resume_document_id else None
+    cover_letter = owned(db, models.DocumentVersion, application.cover_letter_document_id, auth) if application.cover_letter_document_id else None
+    checks = [
+        schemas.PackageChecklistItem(key="job", label="Saved job context", ready=bool(application.job_id), detail="Links the application to a stable job snapshot."),
+        schemas.PackageChecklistItem(key="source", label="Source link", ready=bool(application.source_url), detail="Keeps the original posting reachable."),
+        schemas.PackageChecklistItem(key="resume", label="Approved resume", ready=bool(resume and resume.approved), detail="Attach an approved, job-specific resume version."),
+        schemas.PackageChecklistItem(key="cover_letter", label="Approved cover letter", ready=bool(cover_letter and cover_letter.approved), detail="Attach an approved cover letter when the role benefits from one."),
+        schemas.PackageChecklistItem(key="deadline", label="Application deadline", ready=bool(application.deadline), detail="Capture the deadline so the application can be prioritized."),
+    ]
+    ready_count = sum(item.ready for item in checks)
+    return schemas.ApplicationPackageRead(
+        application_id=application.id,
+        readiness_score=round(100 * ready_count / len(checks), 1),
+        ready_count=ready_count,
+        total_count=len(checks),
+        checklist=checks,
+        resume=resume,
+        cover_letter=cover_letter,
+    )
+
+
 @router.delete("/applications/{application_id}", status_code=204)
 def delete_application(application_id: int, db: Session = Depends(get_db), auth: schemas.AuthUser = Depends(get_current_user)):
     item = owned(db, models.Application, application_id, auth)
@@ -85,7 +113,8 @@ def create_interview(payload: schemas.InterviewCreate, db: Session = Depends(get
     verify_optional_owner(db, models.SavedJob, payload.job_id, auth)
     verify_optional_owner(db, models.DocumentVersion, payload.document_id, auth)
     questions = ai.interview_questions(payload.resume_text, payload.jd_text, payload.interview_type)
-    item = models.InterviewSession(user_uid=auth.uid, job_id=payload.job_id, document_id=payload.document_id, interview_type=payload.interview_type, questions=questions, answers=[])
+    prep_brief = ai.interview_prep(payload.resume_text, payload.jd_text)
+    item = models.InterviewSession(user_uid=auth.uid, job_id=payload.job_id, document_id=payload.document_id, interview_type=payload.interview_type, questions=questions, answers=[], prep_brief=prep_brief)
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -113,6 +142,66 @@ def answer_interview(session_id: int, payload: schemas.InterviewAnswer, db: Sess
 @router.get("/interviews", response_model=list[schemas.InterviewRead])
 def list_interviews(db: Session = Depends(get_db), auth: schemas.AuthUser = Depends(get_current_user)):
     return db.query(models.InterviewSession).filter(models.InterviewSession.user_uid == auth.uid).order_by(models.InterviewSession.updated_at.desc()).limit(50).all()
+
+
+@router.post("/tasks", response_model=schemas.FollowUpTaskRead, status_code=201)
+def create_task(
+    payload: schemas.FollowUpTaskCreate,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    ensure_user(db, auth)
+    owned(db, models.Application, payload.application_id, auth)
+    item = models.FollowUpTask(user_uid=auth.uid, **payload.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.get("/tasks", response_model=list[schemas.FollowUpTaskRead])
+def list_tasks(
+    include_completed: bool = True,
+    application_id: int | None = None,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    query = db.query(models.FollowUpTask).filter(models.FollowUpTask.user_uid == auth.uid)
+    if not include_completed:
+        query = query.filter(models.FollowUpTask.completed_at.is_(None))
+    if application_id is not None:
+        owned(db, models.Application, application_id, auth)
+        query = query.filter(models.FollowUpTask.application_id == application_id)
+    return query.order_by(models.FollowUpTask.completed_at.asc(), models.FollowUpTask.due_at.asc()).limit(200).all()
+
+
+@router.patch("/tasks/{task_id}", response_model=schemas.FollowUpTaskRead)
+def update_task(
+    task_id: int,
+    payload: schemas.FollowUpTaskUpdate,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    item = owned(db, models.FollowUpTask, task_id, auth)
+    changes = payload.model_dump(exclude_unset=True, exclude={"completed"})
+    for key, value in changes.items():
+        setattr(item, key, value)
+    if payload.completed is not None:
+        item.completed_at = dt.datetime.now(dt.timezone.utc) if payload.completed else None
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/tasks/{task_id}", status_code=204)
+def delete_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    auth: schemas.AuthUser = Depends(get_current_user),
+):
+    db.delete(owned(db, models.FollowUpTask, task_id, auth))
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/outreach", response_model=schemas.OutreachRead, status_code=201)

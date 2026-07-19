@@ -40,9 +40,11 @@ def test_job_application_analysis_and_analytics(client, auth_headers):
     body = analysis.json()
     assert len(body["dimensions"]) == 5
     assert all("confidence" in item and "definition" in item for item in body["dimensions"])
-    assert body["methodology_version"] == "heuristic-v1"
+    assert body["methodology_version"] == "heuristic-v2"
+    assert len(body["input_fingerprint"]) == 64
+    assert body["methodology"]["repeatable"] is True
     gap_keywords = {item["keyword"] for item in body["gap_plan"]}
-    assert gap_keywords.isdisjoint({"hire", "hiring", "build", "require", "requires", "experience"})
+    assert gap_keywords.isdisjoint({"hire", "hiring", "build", "require", "requires", "experience", "need", "engineer", "clear"})
 
     application = client.post(
         "/api/v1/applications",
@@ -78,6 +80,8 @@ def test_interview_outreach_and_search_workflows(client, auth_headers):
     )
     assert interview.status_code == 201
     session = interview.json()
+    assert session["prep_brief"]["estimated_minutes"] == 25
+    assert len(session["prep_brief"]["questions_to_ask"]) == 3
     answer = client.post(
         f"/api/v1/interviews/{session['id']}/answers",
         headers=auth_headers,
@@ -101,6 +105,68 @@ def test_interview_outreach_and_search_workflows(client, auth_headers):
     )
     assert search.status_code == 201
     assert search.json()["results"][0]["links"]["LinkedIn"].startswith("https://")
+
+
+def test_market_features_are_owned_and_actionable(client, auth_headers):
+    job = client.post(
+        "/api/v1/jobs",
+        headers=auth_headers,
+        json={"title": "Backend Engineer", "company": "Example", "source_url": "https://example.com/jobs/2", "description": JOB},
+    ).json()
+    resume = client.post(
+        "/api/v1/documents",
+        headers=auth_headers,
+        json={"job_id": job["id"], "kind": "resume", "title": "Tailored resume", "content": RESUME, "approved": True},
+    ).json()
+    cover = client.post(
+        "/api/v1/documents",
+        headers=auth_headers,
+        json={"job_id": job["id"], "kind": "cover_letter", "title": "Cover letter", "content": "A truthful and targeted cover letter for this backend engineering role.", "approved": True},
+    ).json()
+    application = client.post(
+        "/api/v1/applications",
+        headers=auth_headers,
+        json={
+            "job_id": job["id"],
+            "company": "Example",
+            "role": "Backend Engineer",
+            "source_url": job["source_url"],
+            "stage": "applied",
+            "deadline": "2030-01-02T09:00:00Z",
+            "resume_document_id": resume["id"],
+            "cover_letter_document_id": cover["id"],
+        },
+    ).json()
+
+    package = client.get(f"/api/v1/applications/{application['id']}/package", headers=auth_headers)
+    assert package.status_code == 200
+    assert package.json()["readiness_score"] == 100
+
+    task = client.post(
+        "/api/v1/tasks",
+        headers=auth_headers,
+        json={"application_id": application["id"], "task_type": "follow_up", "title": "Follow up with recruiter", "due_at": "2030-01-03T09:00:00Z"},
+    )
+    assert task.status_code == 201
+    completed = client.patch(f"/api/v1/tasks/{task.json()['id']}", headers=auth_headers, json={"completed": True})
+    assert completed.json()["completed_at"] is not None
+
+    evidence = client.post(
+        "/api/v1/evidence",
+        headers=auth_headers,
+        json={"category": "achievement", "title": "Latency improvement", "statement": "Reduced API latency by 25% after profiling SQL queries.", "source": "Performance report", "verified": True, "tags": ["Python", "SQL", "python"]},
+    )
+    assert evidence.status_code == 201
+    assert evidence.json()["tags"] == ["python", "sql"]
+    assert len(client.get("/api/v1/evidence?verified=true", headers=auth_headers).json()) == 1
+
+    scan = client.post("/api/v1/analysis", headers=auth_headers, json={"resume_text": RESUME, "jd_text": JOB, "job_id": job["id"]}).json()
+    history = client.get("/api/v1/analysis/history", headers=auth_headers).json()
+    assert history[0]["input_fingerprint"] == scan["input_fingerprint"]
+
+    other = {"Authorization": "Bearer dev:user-2:other@example.com"}
+    assert client.get(f"/api/v1/applications/{application['id']}/package", headers=other).status_code == 404
+    assert client.patch(f"/api/v1/tasks/{task.json()['id']}", headers=other, json={"completed": False}).status_code == 404
 
 
 def test_upload_validation_and_exports(client, auth_headers):
