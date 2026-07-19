@@ -32,3 +32,11 @@ database before migrations and test restore procedures regularly. Deployments
 should run `alembic upgrade head` before starting the API.
 
 API documentation is available at `/docs` unless `DOCS_ENABLED=false`.
+
+## Market-informed workflow APIs
+
+- `GET|POST|PATCH|DELETE /api/v1/evidence` manages the verified career-evidence vault.
+- `GET|POST|PATCH|DELETE /api/v1/tasks` manages application-linked follow-up reminders.
+- `GET /api/v1/applications/{id}/package` returns server-calculated package readiness.
+- `GET /api/v1/analysis/history` returns reproducible score provenance and scan history.
+- `POST /api/v1/interviews` persists a role-specific preparation brief with each session.

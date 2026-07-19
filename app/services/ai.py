@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 from urllib.parse import quote_plus
@@ -16,6 +17,7 @@ STOPWORDS = {
     "has", "job", "role", "work", "team", "using", "years", "experience", "skills", "required", "preferred",
     "who", "what", "when", "where", "all", "any", "not", "but", "into", "about", "their", "they", "its",
     "hire", "hiring", "build", "requires", "require", "including", "candidate", "position", "opportunity",
+    "need", "needs", "engineer", "clear", "strong", "excellent", "responsible", "responsibilities",
 }
 SECTION_NAMES = {"summary", "experience", "education", "skills", "projects"}
 TECH_SKILLS = {
@@ -38,6 +40,11 @@ def _sentences(text: str) -> list[str]:
 
 def _score(value: float) -> float:
     return round(max(0.0, min(100.0, value)), 1)
+
+
+def _fingerprint(resume_text: str, jd_text: str) -> str:
+    normalized = "\n---TARGET---\n".join(" ".join(value.lower().split()) for value in (resume_text, jd_text))
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def _polish(base_text: str, instruction: str) -> str:
@@ -124,7 +131,25 @@ def analyze(resume_text: str, jd_text: str) -> AnalysisResult:
         verdict = "Moderate match. Strengthen verified evidence for the highest-impact requirements."
     else:
         verdict = "Low evidence match. Prioritize roles closer to demonstrated skills or close gaps before applying."
-    return AnalysisResult(score=overall, verdict=verdict, dimensions=dimensions, gap_plan=gaps, methodology_version="heuristic-v1")
+    methodology = {
+        "label": "Evidence-weighted deterministic match",
+        "weights": weights,
+        "repeatable": True,
+        "limitations": [
+            "This is an explainable heuristic, not a prediction from a specific employer ATS.",
+            "Scores compare only the supplied resume and job description.",
+            "A higher score does not guarantee an interview.",
+        ],
+    }
+    return AnalysisResult(
+        score=overall,
+        verdict=verdict,
+        dimensions=dimensions,
+        gap_plan=gaps,
+        methodology_version="heuristic-v2",
+        input_fingerprint=_fingerprint(resume_text, jd_text),
+        methodology=methodology,
+    )
 
 
 def tailor(resume_text: str, jd_text: str, confirmed_facts: list[str]) -> TailorResult:
@@ -162,6 +187,24 @@ def interview_questions(resume_text: str, jd_text: str, interview_type: str) -> 
     ]
     selected = [item for item in questions if interview_type == "mixed" or item[0] in {interview_type, "mixed"}]
     return [{"id": index, "type": kind, "question": text} for index, (kind, text) in enumerate(selected)]
+
+
+def interview_prep(resume_text: str, jd_text: str) -> dict:
+    analysis = analyze(resume_text, jd_text)
+    strengths = list(dict.fromkeys(evidence for dimension in analysis.dimensions for evidence in dimension.evidence))[:5]
+    gaps = [gap.keyword for gap in analysis.gap_plan[:4]]
+    return {
+        "competencies": [item.label for item in analysis.dimensions[:3]],
+        "talking_points": strengths or ["Select one verified achievement from your resume."],
+        "risk_areas": gaps or ["No high-priority evidence gaps detected."],
+        "questions_to_ask": [
+            "What outcomes would define success in the first 90 days?",
+            "Which challenge is the team most eager for this hire to solve?",
+            "How will this role collaborate with its closest partner teams?",
+        ],
+        "estimated_minutes": 25,
+        "evidence_reminder": "Use only examples and results you can substantiate.",
+    }
 
 
 def score_answer(answer: str, jd_text: str = "") -> dict:

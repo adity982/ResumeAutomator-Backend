@@ -107,6 +107,8 @@ class AnalysisRecord(Base):
     dimensions = Column(JSON, default=list, nullable=False)
     gap_plan = Column(JSON, default=list, nullable=False)
     methodology_version = Column(String(32), default="heuristic-v1", nullable=False)
+    input_fingerprint = Column(String(64), default="", nullable=False, index=True)
+    methodology = Column(JSON, default=dict, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -120,6 +122,7 @@ class InterviewSession(Base):
     interview_type = Column(String(32), default="mixed", nullable=False)
     questions = Column(JSON, default=list, nullable=False)
     answers = Column(JSON, default=list, nullable=False)
+    prep_brief = Column(JSON, default=dict, nullable=False)
     status = Column(String(32), default="active", nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
@@ -147,5 +150,40 @@ class SavedSearch(Base):
     name = Column(String(240), nullable=False)
     preferences = Column(JSON, default=dict, nullable=False)
     results = Column(JSON, default=list, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class CareerEvidence(Base):
+    __tablename__ = "career_evidence"
+    __table_args__ = (Index("ix_evidence_user_updated", "user_uid", "updated_at"),)
+
+    id = Column(Integer, primary_key=True)
+    user_uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(32), nullable=False)
+    title = Column(String(240), nullable=False)
+    statement = Column(Text, nullable=False)
+    source = Column(String(500), default="", nullable=False)
+    verified = Column(Boolean, default=False, nullable=False)
+    tags = Column(JSON, default=list, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class FollowUpTask(Base):
+    __tablename__ = "follow_up_tasks"
+    __table_args__ = (
+        Index("ix_follow_up_user_due", "user_uid", "due_at"),
+        Index("ix_follow_up_application", "application_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False)
+    task_type = Column(String(32), default="follow_up", nullable=False)
+    title = Column(String(240), nullable=False)
+    due_at = Column(DateTime(timezone=True), nullable=False)
+    notes = Column(Text, default="", nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
