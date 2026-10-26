@@ -60,6 +60,8 @@ class DocumentVersion(Base):
     template = Column(String(32), default="standard", nullable=False)
     version = Column(Integer, default=1, nullable=False)
     approved = Column(Boolean, default=False, nullable=False)
+    content_hash = Column(String(64), default="", nullable=False)
+    evidence_snapshot = Column(JSON, default=list, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -76,6 +78,7 @@ class Application(Base):
     stage = Column(String(32), default="saved", nullable=False)
     deadline = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, default="", nullable=False)
+    outcome = Column(String(32), default="", nullable=False)
     resume_document_id = Column(Integer, ForeignKey("document_versions.id", ondelete="SET NULL"), nullable=True)
     cover_letter_document_id = Column(Integer, ForeignKey("document_versions.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
@@ -124,6 +127,7 @@ class InterviewSession(Base):
     answers = Column(JSON, default=list, nullable=False)
     prep_brief = Column(JSON, default=dict, nullable=False)
     status = Column(String(32), default="active", nullable=False)
+    jd_text = Column(Text, default="", nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -139,6 +143,10 @@ class OutreachKit(Base):
     company = Column(String(240), default="", nullable=False)
     tone = Column(String(32), default="professional", nullable=False)
     variants = Column(JSON, default=dict, nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True)
+    status = Column(String(32), default="draft", nullable=False)
+    revision = Column(Integer, default=1, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -187,3 +195,7 @@ class FollowUpTask(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+# Register separately maintained portfolio tables with the same migration metadata.
+from .portfolio_models import Contact, EvidenceChunk, IngestionJob, PortfolioSource, RetrievalRun, PilotFeedback, WorkspaceDraft  # noqa: E402,F401

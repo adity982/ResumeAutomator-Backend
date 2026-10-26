@@ -1,107 +1,68 @@
 # Resume Automator API
 
-Secure FastAPI backend for an evidence-first career workspace: resume parsing, explainable job matching, fact-locked writing assistance, application tracking, interview practice, outreach, discovery, and analytics.
+FastAPI backend for a developer career workspace: select relevant projects, trace claims to source evidence, prepare reviewed application documents, and track the next step.
 
-[![Backend CI](https://github.com/adity982/ResumeAutomator-Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/adity982/ResumeAutomator-Backend/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-009688.svg)](https://fastapi.tiangolo.com/)
+[Frontend](https://github.com/adity982/ResumeAutomator-Frontend) · [Architecture](docs/ARCHITECTURE.md) · [Operations](docs/OPERATIONS.md)
 
-[Live app](https://resume-automator-frontend.vercel.app) · [Frontend](https://github.com/adity982/ResumeAutomator-Frontend) · [Roadmap](./ROADMAP.md) · [API docs](http://127.0.0.1:8000/docs)
+## Core workflow
 
-## Why this backend is different
+1. Save a job snapshot and resume context.
+2. Preview selected public GitHub files at an immutable commit.
+3. Queue a durable import and review your personal contribution separately from repository observations.
+4. Retrieve supporting evidence using a lexical baseline or learned 384-dimensional FastEmbed vectors with pgvector and hybrid fusion.
+5. Select complementary projects and create cited, extractive resume bullets from reviewed statements.
+6. Preview the actual generated PDF, approve an exact document version, and attach it to an application.
+7. Save progress, track contacts and follow-ups manually, practice interviews and record pilot feedback.
 
-Resume Automator is designed around evidence instead of keyword stuffing or fabricated career claims.
+This release does not provide private GitHub access, LinkedIn people-search APIs, profile scraping, automatic messaging or autonomous applying. Discovery produces search links, not verified vacancies. Resume coverage and interview feedback are transparent heuristics, not hiring predictions.
 
-- **Explainable analysis:** deterministic scores include dimensions, weights, evidence, confidence, limitations, and an input fingerprint.
-- **Fact-locked assistance:** tailoring only adds claims the user explicitly confirms; optional AI polishing is constrained to the supplied draft.
-- **Privacy-conscious documents:** uploaded PDFs are validated and parsed in memory rather than retained by the API.
-- **Secure scraping:** job URLs are normalized and checked against private, loopback, metadata, credential-bearing, and unsupported destinations.
-- **Owned workflows:** jobs, documents, applications, evidence, tasks, interviews, outreach kits, and saved searches are scoped to the authenticated user.
-- **Reproducible storage:** SQLAlchemy models and Alembic migrations support SQLite locally and PostgreSQL in production.
+## Stack and setup
 
-## API surface
-
-| Area | Representative endpoints |
-|---|---|
-| Health and operations | `/health/live`, `/health/ready`, `/metrics` |
-| Resume and document workflows | `/api/v1/resumes/parse`, `/api/v1/documents`, `/api/v1/documents/export` |
-| Jobs and analysis | `/api/v1/jobs`, `/api/v1/jobs/scrape`, `/api/v1/analysis`, `/api/v1/analysis/history` |
-| Evidence and writing | `/api/v1/evidence`, `/api/v1/ai/tailor`, `/api/v1/ai/cover-letter` |
-| Application workflow | `/api/v1/applications`, `/api/v1/tasks`, `/api/v1/outreach` |
-| Interview and discovery | `/api/v1/interviews`, `/api/v1/searches`, `/api/v1/analytics/summary` |
-
-Interactive OpenAPI and ReDoc pages are available at `/docs` and `/redoc` unless `DOCS_ENABLED=false`.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    UI[React frontend] --> API[FastAPI routers]
-    API --> AUTH[Development or Firebase auth]
-    API --> SERVICES[Analysis, documents, AI, scraper]
-    API --> DB[(SQLite or PostgreSQL)]
-    SERVICES --> GROQ[Optional Groq polishing]
-```
-
-The analysis path remains deterministic without a `GROQ_API_KEY`. When Groq is configured, it is used only to polish an already constructed draft and cannot introduce new numeric claims.
-
-## Local setup
-
-Requires Python 3.12.
-
-```bash
-python -m venv .venv
-# Activate the environment for your shell
-python -m pip install -r requirements-dev.txt
-cp .env.example .env
-alembic upgrade head
-uvicorn main:app --reload
-```
-
-For local development, set `APP_ENV=development` and `AUTH_MODE=development` in `.env`. Local clients can then authenticate with:
+Python 3.12, FastAPI, SQLAlchemy/Alembic, Firebase identity, PostgreSQL/pgvector in production, SQLite for local compatibility, and optional FastEmbed/ONNX inference. PDF export bundles Unicode fonts; unsupported glyphs produce an explicit error rather than silent deletion. DOCX applies the selected document theme.
 
 ```text
-Authorization: Bearer dev:<uid>:<email>
+python -m venv .venv
+python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements-rag.txt
 ```
 
-Check the server:
+Activate the environment, copy `.env.example` to `.env`, then:
 
-```bash
-curl http://127.0.0.1:8000/health/live
+```text
+python -m alembic upgrade head
+python -m uvicorn main:app --reload
 ```
+
+Run `python -m app.worker` in a second terminal with the same environment and database. Set `EMBEDDING_PROVIDER=fastembed` for learned vectors; the default `lexical` baseline needs no model download and is explicitly labeled. Production must use Firebase authentication and an explicit CORS allowlist. See the operations guide for PostgreSQL, model warm-up, worker deployment, budgets, restore testing and rollout order.
+
+## API areas
+
+| Area | Endpoints |
+| --- | --- |
+| Portfolio | `/api/v1/sources/preview`, `/sources`, `/imports`, `/project-evidence/{id}` |
+| Selection | `/api/v1/jobs/{id}/projects` |
+| Workspace | `/api/v1/workspace` with revision-checked save/recovery |
+| Applications | `/api/v1/applications`, `/applications/{id}/events`, `/applications/{id}/package` |
+| Documents | `/api/v1/resumes/parse`, `/documents`, `/documents/export` |
+| Contacts/outreach | `/api/v1/contacts`, `/outreach` with editable drafts and manual delivery status |
+| Practice/feedback | `/api/v1/interviews`, `/pilot/feedback`, `/pilot/summary` |
+| Privacy | `/api/v1/account/export`, `DELETE /api/v1/account` |
+| Operations | `/health/live`, `/health/ready`, `/metrics`, `/api/v1/capabilities` |
+
+Interactive API schemas are available at `/docs` unless disabled. All private resources are scoped to the verified user. Source citations are re-resolved server-side, and changed or removed evidence invalidates dependent retrieval histories and application-package checks. Repository content is untrusted data, never executable instructions.
 
 ## Validation
 
-Run the same focused checks used by CI:
-
-```bash
+```text
 python -m compileall -q app main.py
 pytest --cov=app --cov-report=term-missing
-alembic upgrade head
+python -m evaluations.run --output evaluation-results/retrieval.json
 ```
 
-The GitHub Actions workflow runs compilation, tests with coverage, and a clean migration on Python 3.12 for pushes to `main` and pull requests.
+The versioned evaluation fixture contains 60 synthetic relevance queries, including paraphrases, hard negatives and missing-evidence cases. With FastEmbed enabled it compares lexical, dense and hybrid retrieval. It is a regression benchmark, not a user study or production load test. CI exercises API behavior on SQLite and PostgreSQL/pgvector and checks migration upgrades. The frontend repository owns the cross-repository browser journey.
 
-## Repository map
+## Privacy and retention
 
-- [`app/routers/core.py`](./app/routers/core.py) — resume, job, document, analysis, evidence, and account endpoints
-- [`app/routers/workflows.py`](./app/routers/workflows.py) — applications, interviews, tasks, outreach, searches, and analytics
-- [`app/services/ai.py`](./app/services/ai.py) — deterministic matching plus optional constrained polishing
-- [`app/services/documents.py`](./app/services/documents.py) — PDF validation, parsing, and document export
-- [`app/services/scraper.py`](./app/services/scraper.py) — normalized public-URL fetching with SSRF defenses
-- [`tests/`](./tests) — API, ownership, authentication, privacy, and URL-security coverage
-- [`alembic/versions/`](./alembic/versions) — versioned database migrations
+Uploaded PDF bytes are not retained by the parsing route. Saved text, workspace drafts, public source excerpts, reviewed claims, contacts, answers and feedback are persisted until deleted. Resume drafts are not written to browser local storage. Users can export account data, forget progress and remove sources. Deleting application data does not delete the Google/Firebase sign-in identity. Hashed usage windows expire within 24 hours; operators must separately document log and backup retention.
 
-## Production boundaries
-
-- Set `APP_ENV=production`, `AUTH_MODE=firebase`, and `FIREBASE_PROJECT_ID`.
-- Configure an explicit `CORS_ORIGINS` allowlist.
-- Use PostgreSQL through `DATABASE_URL`; back up the database before migrations and test restores.
-- Run `alembic upgrade head` before starting the service.
-- Keep `GROQ_API_KEY` server-side and disable docs with `DOCS_ENABLED=false` when appropriate.
-- Tune upload, PDF-page, rate, cache, and AI-timeout limits through the documented environment variables.
-- `DELETE /api/v1/account` removes the authenticated user and associated records through database cascades.
-
-## Related repository
-
-The React client lives in [`adity982/ResumeAutomator-Frontend`](https://github.com/adity982/ResumeAutomator-Frontend). It provides the evidence workbench, career-evidence vault, job library, application board, interview coach, outreach studio, discovery panel, and analytics dashboard.
+Optional Groq cover-letter polishing sends its supplied draft to Groq when configured. The flagship project-selection/drafting path uses local retrieval and exact reviewed statements, without an external generation API charge. User review remains necessary; retrieval and keyword checks cannot independently prove personal authorship or semantic truth.

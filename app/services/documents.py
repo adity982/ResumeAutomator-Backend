@@ -6,6 +6,7 @@ from pathlib import Path
 
 import fitz
 from docx import Document
+from docx.shared import Pt, RGBColor
 from fpdf import FPDF
 
 from ..config import settings
@@ -61,19 +62,35 @@ THEMES = {
     "minimalist": ("helvetica", 10, (70, 70, 70), (40, 44, 52)),
     "creative": ("courier", 10, (0, 0, 0), (0, 120, 110)),
 }
+FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+
+def _unicode_fonts(pdf):
+    pdf.add_font("Noto", fname=str(FONT_DIR / "NotoSans-Regular.ttf"))
+    pdf.add_font("Noto", style="B", fname=str(FONT_DIR / "NotoSans-Bold.ttf"))
+    pdf.add_font("Devanagari", fname=str(FONT_DIR / "NotoSansDevanagari-Regular.ttf"))
+    pdf.set_fallback_fonts(["Devanagari"], exact_match=False)
+    pdf.set_text_shaping(True)
+
+
+def validate_glyphs(pdf, text):
+    supported = set().union(*(font.cmap for font in pdf.fonts.values()))
+    missing = sorted({c for c in text if not c.isspace() and ord(c) not in supported})
+    if missing:
+        raise InvalidDocument("The export fonts do not support these characters: " + " ".join(missing[:10]) + ". Edit them or configure an appropriate font; no characters were silently removed.")
 
 
 def create_pdf(text: str, template: str, doc_type: str) -> bytes:
     font, size, text_color, header_color = THEMES.get(template, THEMES["standard"])
-    cleaned = re.sub(r"[^\x20-\x7E\n\r\t]", "", text).strip()
+    cleaned = text.strip()
     if not cleaned:
         raise InvalidDocument("Document content is empty after validation.")
     pdf = FPDF()
+    _unicode_fonts(pdf)
+    validate_glyphs(pdf, cleaned)
+    font = "Noto"
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
-    pdf.set_font(font, style="B", size=14)
-    pdf.set_text_color(*header_color)
-    pdf.cell(0, 10, "TAILORED RESUME" if doc_type == "resume" else "COVER LETTER", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(font, size=size)
     pdf.set_text_color(*text_color)
     for line in cleaned.splitlines():
@@ -89,10 +106,17 @@ def create_pdf(text: str, template: str, doc_type: str) -> bytes:
 
 def create_docx(text: str, template: str, doc_type: str) -> bytes:
     document = Document()
+    font, size, text_color, header_color = THEMES.get(template, THEMES["standard"])
+    font_name = {"times": "Noto Serif", "helvetica": "Noto Sans", "courier": "Consolas"}[font]
+    for style_name in ("Normal", "List Bullet"):
+        style = document.styles[style_name]
+        style.font.name = font_name
+        style.font.size = Pt(size)
+        style.font.color.rgb = RGBColor(*text_color)
+    for style_name in ("Heading 1", "Title"):
+        document.styles[style_name].font.color.rgb = RGBColor(*header_color)
     section = document.sections[0]
     section.top_margin = section.bottom_margin = 720000
-    title = document.add_heading("Tailored Resume" if doc_type == "resume" else "Cover Letter", 0)
-    title.style = document.styles["Title"]
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:

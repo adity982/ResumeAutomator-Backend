@@ -40,7 +40,7 @@ def test_job_application_analysis_and_analytics(client, auth_headers):
     body = analysis.json()
     assert len(body["dimensions"]) == 5
     assert all("confidence" in item and "definition" in item for item in body["dimensions"])
-    assert body["methodology_version"] == "heuristic-v2"
+    assert body["methodology_version"] == "heuristic-v3"
     assert len(body["input_fingerprint"]) == 64
     assert body["methodology"]["repeatable"] is True
     gap_keywords = {item["keyword"] for item in body["gap_plan"]}

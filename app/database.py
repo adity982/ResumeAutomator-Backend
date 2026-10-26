@@ -13,7 +13,10 @@ if settings.database_url.startswith("sqlite"):
 if settings.database_url == "sqlite://":
     engine_kwargs["poolclass"] = StaticPool
 
-engine = create_engine(settings.database_url, **engine_kwargs)
+database_url = settings.database_url
+if database_url.startswith(("postgres://", "postgresql://")):
+    database_url = "postgresql+psycopg://" + database_url.split("://", 1)[1]
+engine = create_engine(database_url, **engine_kwargs)
 
 if settings.database_url.startswith("sqlite"):
     @event.listens_for(engine, "connect")

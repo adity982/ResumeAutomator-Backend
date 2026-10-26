@@ -6,6 +6,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -15,6 +16,7 @@ from ..deps import ensure_user, owned, verify_optional_owner
 from ..services import ai
 from ..services.documents import InvalidDocument, create_docx, create_pdf, parse_pdf, safe_filename
 from ..services.scraper import UnsafeURL, normalize_url, scrape_job
+from ..config import settings
 
 
 router = APIRouter(prefix="/api/v1", tags=["core"])
@@ -31,7 +33,7 @@ async def parse_resume(
 ):
     if file.content_type not in {"application/pdf", "application/x-pdf", "application/octet-stream"}:
         raise HTTPException(status_code=415, detail="Only PDF uploads are supported.")
-    content = await file.read()
+    content = await file.read(settings.max_upload_bytes + 1)
     try:
         parsed = parse_pdf(content)
     except InvalidDocument as exc:
@@ -57,6 +59,7 @@ def create_job(
     auth: schemas.AuthUser = Depends(get_current_user),
 ):
     ensure_user(db, auth)
+    db.query(models.User).filter_by(uid=auth.uid).with_for_update().one()
     normalized = normalize_url(payload.source_url) if payload.source_url else ""
     content_hash = _hash(payload.description)
     version = (
@@ -103,10 +106,17 @@ def update_job(
 ):
     item = owned(db, models.SavedJob, job_id, auth)
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if value is None:
+            raise HTTPException(422, f"{key} cannot be null.")
         setattr(item, key, value)
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.get("/jobs/{job_id}", response_model=schemas.JobRead)
+def read_job(job_id: int, db: Session = Depends(get_db), auth: schemas.AuthUser = Depends(get_current_user)):
+    return owned(db, models.SavedJob, job_id, auth)
 
 
 @router.post("/jobs/{job_id}/refresh", response_model=schemas.JobRead, status_code=201)
@@ -122,6 +132,9 @@ async def refresh_job(
         result, _ = await scrape_job(previous.source_url)
     except (UnsafeURL, httpx.HTTPError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.query(models.User).filter_by(uid=auth.uid).with_for_update().one()
+    content_hash = _hash(result["description"])
+    latest_version = db.query(func.max(models.SavedJob.version)).filter_by(user_uid=auth.uid, content_hash=content_hash).scalar() or 0
     item = models.SavedJob(
         user_uid=auth.uid,
         title=result["title"],
@@ -131,8 +144,8 @@ async def refresh_job(
         normalized_url=normalize_url(result["source_url"]),
         description=result["description"],
         extraction_method="scrape",
-        content_hash=_hash(result["description"]),
-        version=previous.version + 1,
+        content_hash=content_hash,
+        version=max(previous.version, latest_version) + 1,
     )
     db.add(item)
     db.commit()
@@ -155,17 +168,35 @@ def create_document(
     auth: schemas.AuthUser = Depends(get_current_user),
 ):
     ensure_user(db, auth)
+    db.query(models.User).filter_by(uid=auth.uid).with_for_update().one()
     verify_optional_owner(db, models.SavedJob, payload.job_id, auth)
     logical_id = payload.logical_id or str(uuid.uuid4())
+    previous = db.query(models.DocumentVersion).filter_by(user_uid=auth.uid, logical_id=logical_id).first()
+    if previous and (previous.kind != payload.kind or previous.job_id != payload.job_id):
+        raise HTTPException(409, "A document family must keep the same kind and target job.")
+    snapshots = []
+    for evidence_id in payload.evidence_snapshot:
+        evidence = owned(db, models.EvidenceChunk, evidence_id, auth)
+        source = owned(db, models.PortfolioSource, evidence.source_id, auth)
+        if source.status != "ready" or evidence.review_status != "approved":
+            raise HTTPException(409, "Document evidence is no longer approved or available. Review it again.")
+        if evidence.approved_statement not in payload.content:
+            raise HTTPException(409, "A cited statement changed in the document. Review that wording as project evidence before saving an approved citation.")
+        snapshots.append({"evidence_id": evidence.id, "hash": _hash(evidence.approved_statement + evidence.content_hash)})
+    digest = hashlib.sha256((payload.content + payload.template + payload.kind + str(snapshots)).encode()).hexdigest()
     version = (
         db.query(func.max(models.DocumentVersion.version))
         .filter(models.DocumentVersion.user_uid == auth.uid, models.DocumentVersion.logical_id == logical_id)
         .scalar()
         or 0
     ) + 1
-    item = models.DocumentVersion(user_uid=auth.uid, logical_id=logical_id, version=version, **payload.model_dump(exclude={"logical_id"}))
+    item = models.DocumentVersion(user_uid=auth.uid, logical_id=logical_id, version=version, content_hash=digest, **payload.model_dump(exclude={"logical_id", "evidence_snapshot"}), evidence_snapshot=snapshots)
     db.add(item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "A document version was saved concurrently. Retry to create the next version.") from exc
     db.refresh(item)
     return item
 
@@ -255,8 +286,19 @@ def batch_analysis(payload: schemas.BatchAnalysisRequest, auth: schemas.AuthUser
 
 
 @router.post("/ai/tailor", response_model=schemas.TailorResult)
-def tailor_resume(payload: schemas.TailorRequest, auth: schemas.AuthUser = Depends(get_current_user)):
-    return ai.tailor(payload.resume_text, payload.jd_text, payload.confirmed_facts)
+def tailor_resume(payload: schemas.TailorRequest, db: Session = Depends(get_db), auth: schemas.AuthUser = Depends(get_current_user)):
+    citations, statements = [], []
+    for evidence_id in dict.fromkeys(payload.evidence_ids):
+        evidence = owned(db, models.EvidenceChunk, evidence_id, auth)
+        source = owned(db, models.PortfolioSource, evidence.source_id, auth)
+        if source.status != "ready" or evidence.review_status != "approved" or not evidence.approved_statement:
+            raise HTTPException(409, "Choose only reviewed evidence from an available source.")
+        statements.append(evidence.approved_statement)
+        citations.append({"evidence_id": evidence.id, "url": evidence.source_url, "statement": evidence.approved_statement, "source_id": source.id})
+    if not statements:
+        return ai.tailor(payload.resume_text, payload.jd_text, payload.confirmed_facts)
+    text = payload.resume_text.rstrip() + "\n\nSELECTED PROJECT CONTRIBUTIONS\n" + "\n".join("- " + statement for statement in statements)
+    return schemas.TailorResult(original=payload.resume_text, tailored=text, added_phrases=statements, citations=citations, warnings=["These bullets reproduce your reviewed contribution statements. Edit and approve the final resume before using it."])
 
 
 @router.post("/ai/cover-letter", response_model=schemas.GeneratedText)
@@ -309,6 +351,8 @@ def update_evidence(
     if changes.get("tags") is not None:
         changes["tags"] = list(dict.fromkeys(tag.strip().lower() for tag in changes["tags"] if tag.strip()))
     for key, value in changes.items():
+        if value is None:
+            raise HTTPException(422, f"{key} cannot be null.")
         setattr(item, key, value)
     db.commit()
     db.refresh(item)

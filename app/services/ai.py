@@ -11,7 +11,7 @@ from ..config import settings
 from ..schemas import AnalysisResult, Dimension, GapAction, SearchPreferences, TailorResult
 
 
-WORD = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]{2,}")
+WORD = re.compile(r"(?<![\w])[A-Za-z][A-Za-z0-9+#.-]*(?![\w])")
 STOPWORDS = {
     "and", "the", "with", "for", "that", "this", "from", "your", "you", "our", "are", "will", "have",
     "has", "job", "role", "work", "team", "using", "years", "experience", "skills", "required", "preferred",
@@ -24,6 +24,8 @@ TECH_SKILLS = {
     "python", "java", "javascript", "typescript", "react", "angular", "vue", "node", "fastapi", "django",
     "sql", "postgresql", "mysql", "aws", "azure", "gcp", "docker", "kubernetes", "git", "figma", "excel",
     "tableau", "powerbi", "machine", "learning", "analytics", "product", "management", "salesforce", "agile",
+    "c", "c++", "c#", "go", "r", "rust", "redis", "pgvector", "rag", "embeddings", "pytest", "testing",
+    "kafka", "graphql", "terraform", "pytorch", "tensorflow", "oauth", "jwt", "vector", "retrieval",
 }
 ACTION_VERBS = {"led", "built", "created", "improved", "delivered", "managed", "designed", "developed", "launched", "reduced", "increased"}
 groq_client = Groq(api_key=settings.groq_api_key, timeout=settings.ai_timeout_seconds, max_retries=2) if settings.groq_api_key else None
@@ -31,7 +33,8 @@ groq_client = Groq(api_key=settings.groq_api_key, timeout=settings.ai_timeout_se
 
 def tokens(text: str) -> list[str]:
     normalized = (match.group(0).lower().strip(".") for match in WORD.finditer(text))
-    return [word for word in normalized if word not in STOPWORDS]
+    aliases = {"postgres": "postgresql", "postgresql": "postgresql", "reactjs": "react", "nodejs": "node", "k8s": "kubernetes", "golang": "go"}
+    return [aliases.get(word, word) for word in normalized if word not in STOPWORDS]
 
 
 def _sentences(text: str) -> list[str]:
@@ -54,6 +57,7 @@ def _polish(base_text: str, instruction: str) -> str:
         completion = groq_client.chat.completions.create(
             model=settings.groq_model,
             temperature=0.2,
+            max_completion_tokens=512,
             messages=[
                 {"role": "system", "content": "You polish supplied career-writing drafts. Never add names, employers, dates, numbers, skills, or claims that are not already in the draft. Return only the revised draft."},
                 {"role": "user", "content": f"{instruction}\n\nDRAFT:\n{base_text[:5000]}"},
@@ -84,12 +88,11 @@ def analyze(resume_text: str, jd_text: str) -> AnalysisResult:
 
     jd_actions = jd_set & ACTION_VERBS
     resume_actions = resume_set & ACTION_VERBS
-    action_overlap = len(jd_actions & resume_actions) / max(len(jd_actions), 1)
-    quantified_lines = len(re.findall(r"\b\d+(?:\.\d+)?%?|\$\d+", resume_text))
-    experience_score = _score(55 * action_overlap + 45 * min(quantified_lines / 5, 1))
+    relevant_actions = [sentence for sentence in _sentences(resume_text) if set(tokens(sentence)) & ACTION_VERBS and set(tokens(sentence)) & jd_set]
+    experience_score = _score(100 * min(len(relevant_actions) / 3, 1))
 
     lower_resume = resume_text.lower()
-    found_sections = [name for name in SECTION_NAMES if name in lower_resume]
+    found_sections = [name for name in sorted(SECTION_NAMES) if re.search(rf"(?m)^\s*{name}\s*:?\s*$", lower_resume)]
     formatting_score = _score(100 * len(found_sections) / len(SECTION_NAMES))
 
     lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
@@ -97,11 +100,11 @@ def analyze(resume_text: str, jd_text: str) -> AnalysisResult:
     readability_score = _score(100 - abs(14 - average_words) * 4)
 
     dimensions = [
-        Dimension(key="skills", label="Skills alignment", score=skills_score, definition="Share of explicit job skills found in the resume.", evidence=matched_skills[:8], confidence=0.85 if jd_skills else 0.55),
-        Dimension(key="keywords", label="Keyword coverage", score=keyword_score, definition="Coverage of the 30 most frequent meaningful job terms.", evidence=matched[:8], confidence=0.78),
-        Dimension(key="experience", label="Experience evidence", score=experience_score, definition="Overlap of outcome verbs plus quantified evidence in the resume.", evidence=sorted(resume_actions & jd_actions)[:8], confidence=0.62),
-        Dimension(key="formatting", label="Section completeness", score=formatting_score, definition="Presence of standard resume sections; this does not grade visual design.", evidence=found_sections, confidence=0.9),
-        Dimension(key="readability", label="Line readability", score=readability_score, definition="Heuristic based on average words per non-empty line.", evidence=[f"Average words per line: {average_words:.1f}"], confidence=0.58),
+        Dimension(key="skills", label="Skills alignment", score=skills_score, definition="Share of explicit job skills found in the resume.", evidence=matched_skills[:8], confidence=None),
+        Dimension(key="keywords", label="Keyword coverage", score=keyword_score, definition="Coverage of the 30 most frequent meaningful job terms.", evidence=matched[:8], confidence=None),
+        Dimension(key="experience", label="Experience evidence", score=experience_score, definition="Resume sentences containing an action verb and a job term; this does not verify experience.", evidence=[sentence[:500] for sentence in relevant_actions[:8]], confidence=None),
+        Dimension(key="formatting", label="Section completeness", score=formatting_score, definition="Presence of standard resume sections; this does not grade visual design.", evidence=found_sections, confidence=None),
+        Dimension(key="readability", label="Line readability", score=readability_score, definition="Heuristic based on average words per non-empty line.", evidence=[f"Average words per line: {average_words:.1f}"], confidence=None),
     ]
     weights = {"skills": 0.3, "keywords": 0.25, "experience": 0.25, "formatting": 0.1, "readability": 0.1}
     overall = _score(sum(item.score * weights[item.key] for item in dimensions))
@@ -119,18 +122,18 @@ def analyze(resume_text: str, jd_text: str) -> AnalysisResult:
                 jd_evidence=evidence[:500] or f"Repeated requirement: {keyword}",
                 resume_evidence=related[:500] if related else None,
                 suggestion=("Clarify existing evidence without changing the underlying fact." if related else "Do not add this claim unless you can provide truthful evidence."),
-                confidence=0.82 if evidence else 0.6,
+                confidence=None,
             )
         )
         if len(gaps) == 10:
             break
 
     if overall >= 75:
-        verdict = "Strong evidence match. Review remaining gaps and keep every claim factual."
+        verdict = "High text coverage. Review remaining gaps and keep every claim factual."
     elif overall >= 50:
-        verdict = "Moderate match. Strengthen verified evidence for the highest-impact requirements."
+        verdict = "Moderate text coverage. Strengthen verified evidence for the highest-impact requirements."
     else:
-        verdict = "Low evidence match. Prioritize roles closer to demonstrated skills or close gaps before applying."
+        verdict = "Low text coverage. Inspect supporting experience before deciding whether to apply."
     methodology = {
         "label": "Evidence-weighted deterministic match",
         "weights": weights,
@@ -146,21 +149,17 @@ def analyze(resume_text: str, jd_text: str) -> AnalysisResult:
         verdict=verdict,
         dimensions=dimensions,
         gap_plan=gaps,
-        methodology_version="heuristic-v2",
+        methodology_version="heuristic-v3",
         input_fingerprint=_fingerprint(resume_text, jd_text),
         methodology=methodology,
     )
 
 
 def tailor(resume_text: str, jd_text: str, confirmed_facts: list[str]) -> TailorResult:
-    result = analyze(resume_text, jd_text)
-    confirmed = {item.lower() for item in confirmed_facts}
-    safe_keywords = [gap.keyword for gap in result.gap_plan if gap.keyword.lower() in confirmed]
-    warnings = [f"'{gap.keyword}' was not added because no confirmed evidence was supplied." for gap in result.gap_plan if gap.keyword.lower() not in confirmed][:8]
-    addition = ""
-    if safe_keywords:
-        addition = "\n\nTARGET ROLE ALIGNMENT\nVerified relevant keywords: " + ", ".join(safe_keywords) + "."
-    return TailorResult(original=resume_text, tailored=resume_text.rstrip() + addition, added_phrases=safe_keywords, warnings=warnings)
+    # Checkboxes and keyword strings are not evidence of a personal achievement.
+    return TailorResult(original=resume_text, tailored=resume_text, added_phrases=[], warnings=[
+        "No unsupported keywords were added. Choose reviewed project evidence to propose cited bullets."
+    ])
 
 
 def cover_letter(resume_text: str, jd_text: str, company: str, role: str) -> str:
@@ -207,33 +206,48 @@ def interview_prep(resume_text: str, jd_text: str) -> dict:
     }
 
 
-def score_answer(answer: str, jd_text: str = "") -> dict:
-    lowered = answer.lower()
-    star_markers = sum(marker in lowered for marker in ("situation", "task", "action", "result"))
-    specificity = min(len(re.findall(r"\b\d+(?:\.\d+)?%?|\$\d+", answer)) / 2, 1)
-    relevant_terms = set(tokens(jd_text)) & set(tokens(answer)) if jd_text else set()
-    clarity = max(0.0, 1 - abs(140 - len(answer.split())) / 200)
-    score = _score(40 * star_markers / 4 + 30 * specificity + 30 * clarity)
+def score_answer(answer: str, jd_text: str = "", question: str = "") -> dict:
+    meaningful = tokens(answer)
+    counts = Counter(meaningful)
+    repetitive = not meaningful or max(counts.values(), default=0) / max(len(meaningful), 1) > 0.25
+    relevant_terms = set(tokens(jd_text + " " + question)) & set(meaningful) - {"situation", "task", "action", "result"}
+    personal_action = bool(re.search(r"\bI\s+(?:built|designed|implemented|tested|debugged|profiled|led|chose|measured|reduced)\b", answer, re.I))
+    outcome = bool(re.search(r"\b(?:resulted|reduced|improved|learned|resolved|increased|fell)\b", answer, re.I))
+    evidence_sentences = [s for s in _sentences(answer) if set(tokens(s)) & relevant_terms][:3]
+    score = 0 if repetitive else _score(40 * min(len(relevant_terms) / 4, 1) + 35 * personal_action + 25 * outcome)
+    missing = []
+    if not relevant_terms:
+        missing.append("Connect your example to the question and role.")
+    if not personal_action:
+        missing.append("Explain your own action and the trade-off you made.")
+    if not outcome:
+        missing.append("Describe the actual outcome or lesson; numbers are optional.")
+    if repetitive:
+        missing.insert(0, "The answer is highly repetitive; provide a substantive example.")
     return {
         "score": score,
-        "dimensions": {"structure": round(100 * star_markers / 4), "specificity": round(100 * specificity), "clarity": round(100 * clarity)},
-        "feedback": "Use a clear situation-action-result structure and quantify only outcomes you can substantiate.",
+        "dimensions": {"relevance": 0 if repetitive else round(100 * min(len(relevant_terms) / 4, 1)), "personal_action": 100 if personal_action and not repetitive else 0, "outcome": 100 if outcome and not repetitive else 0},
+        "feedback": " ".join(missing) or "Your example includes relevant detail, a personal action and an outcome. Explain the trade-off next.",
         "matched_terms": sorted(relevant_terms)[:8],
         "stronger_answer_outline": "Situation and stakes; your specific action and trade-off; measurable result; lesson relevant to this role.",
+        "evidence": evidence_sentences,
+        "limitations": "Deterministic practice checklist, not a calibrated interview assessment or fact verification.",
+        "follow_up": "What alternative did you consider, and what evidence led you to your decision?",
     }
 
 
-def outreach_variants(resume_text: str, jd_text: str, name: str, role: str, company: str, cta: str) -> dict:
+def outreach_variants(resume_text: str, jd_text: str, name: str, role: str, company: str, cta: str, tone: str = "professional") -> dict:
     analysis = analyze(resume_text, jd_text)
     evidence = [item for dimension in analysis.dimensions[:2] for item in dimension.evidence][:2]
     proof = " and ".join(evidence) or "the relevant experience in my resume"
     greeting = f"Hi {name}," if name else "Hello,"
+    opening = {"professional": f"I am contacting you in your role as {role or 'a team contact'}.", "warm": f"I hope your week is going well. I would value your perspective as {role or 'a team contact'}.", "concise": f"A quick question for you as {role or 'a team contact'}."}[tone]
     return {
         "subjects": [f"Interest in opportunities at {company or 'your team'}", f"Candidate with experience in {proof}"],
-        "recruiter_email": f"{greeting}\n\nI am exploring the role at {company or 'your company'} and bring verified experience in {proof}. Would you be open to {cta}?\n\nBest,\nCandidate",
-        "hiring_manager_note": f"{greeting} I am interested in your team because the role emphasizes {proof}. I would value {cta} to compare my experience with your priorities.",
-        "referral_request": f"{greeting} I am considering a role at {company or 'your company'}. Based on my experience in {proof}, would you be comfortable sharing your perspective or referring me if the fit is genuine?",
-        "linkedin_message": f"{greeting} I have relevant experience in {proof} and am exploring {company or 'your team'}. Open to {cta}?"[:300],
+        "recruiter_email": f"{greeting}\n\n{opening} I am exploring the role at {company or 'your company'}; my resume includes {proof}. Would you be open to {cta}?\n\nBest,\nCandidate",
+        "hiring_manager_note": f"{greeting} {opening} My resume includes {proof}. Would you be open to {cta} about {company or 'your team'}?",
+        "referral_request": f"{greeting} {opening} I am considering a role at {company or 'your company'}. My resume includes {proof}. Would you be comfortable sharing your perspective or referring me if the fit is relevant?",
+        "linkedin_message": f"{greeting} {opening} My resume includes {proof}. Open to {cta} about {company or 'your team'}?"[:300],
         "follow_ups": [
             "Following up in case this was buried. I would still value a brief conversation if the fit is relevant.",
             "One final note: I remain interested, but no response is needed if priorities have changed. Thank you for considering it.",
@@ -258,8 +272,9 @@ def discover(resume_text: str, preferences: SearchPreferences) -> list[dict]:
         results.append(
             {
                 "title": title,
-                "fit_score": min(95, 60 + 10 * len(overlap) + 5 * len(set(preferences.skills) & set(resume_skills))),
-                "reason": f"Matches demonstrated skills: {', '.join(resume_skills[:4]) or 'review resume evidence'}.",
+                "fit_score": None,
+                "reason": f"Search suggestion based on resume terms: {', '.join(resume_skills[:4]) or 'review resume evidence'}. No opening has been evaluated.",
+                "limitations": "Salary and seniority must be checked on the provider; these are search links, not verified vacancies.",
                 "links": {
                     "LinkedIn": f"https://www.linkedin.com/jobs/search/?keywords={query}",
                     "Indeed": f"https://www.indeed.com/jobs?q={query}",
