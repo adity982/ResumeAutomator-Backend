@@ -7,14 +7,14 @@ FastAPI backend for a developer career workspace: select relevant projects, trac
 ## Core workflow
 
 1. Save a job snapshot and resume context.
-2. Preview selected public GitHub files at an immutable commit.
+2. Preview selected public GitHub files, or connect a configured GitHub App for selected private repositories, at an immutable commit.
 3. Queue a durable import and review your personal contribution separately from repository observations.
 4. Retrieve supporting evidence using a lexical baseline or learned 384-dimensional FastEmbed vectors with pgvector and hybrid fusion.
 5. Select complementary projects and create cited, extractive resume bullets from reviewed statements.
 6. Preview the actual generated PDF, approve an exact document version, and attach it to an application.
 7. Save progress, track contacts and follow-ups manually, practice interviews and record pilot feedback.
 
-This release does not provide private GitHub access, LinkedIn people-search APIs, profile scraping, automatic messaging or autonomous applying. Discovery produces search links, not verified vacancies. Resume coverage and interview feedback are transparent heuristics, not hiring predictions.
+Private GitHub authorization is optional and requires operator registration; see [GitHub App activation](docs/GITHUB-APP.md). This release does not provide LinkedIn people-search APIs, profile scraping, automatic messaging or autonomous applying. Discovery produces search links, not verified vacancies. Resume coverage and interview feedback are transparent heuristics, not hiring predictions.
 
 ## Stack and setup
 

@@ -13,7 +13,7 @@ from ..auth import get_current_user
 from ..database import get_db
 from ..deps import ensure_user, owned, verify_optional_owner
 from ..schemas import AuthUser
-from ..services import embeddings, github_import, retrieval
+from ..services import embeddings, github_import, github_connection, retrieval
 from ..services.ai import tokens, TECH_SKILLS
 from ..services.provenance import invalidate_source
 
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1", tags=["portfolio"])
 
 
 def source_read(source):
-    return {"id": source.id, "repository": source.repository, "commit_sha": source.commit_sha, "source_url": source.source_url, "description": source.description, "is_fork": source.is_fork, "status": source.status, "relationship": source.relationship, "contribution": source.contribution, "created_at": source.created_at, "files": [{"path": f["path"], "bytes": f["bytes"], "excerpt": f["content"][:400]} for f in source.files]}
+    return {"id": source.id, "repository": source.repository, "commit_sha": source.commit_sha, "source_url": source.source_url, "description": source.description, "is_fork": source.is_fork, "is_private": source.is_private, "status": source.status, "relationship": source.relationship, "contribution": source.contribution, "created_at": source.created_at, "files": [{"path": f["path"], "bytes": f["bytes"], "excerpt": f["content"][:400]} for f in source.files]}
 
 
 @router.post("/sources/preview", status_code=201)
@@ -30,7 +30,9 @@ def preview_source(payload: schemas.SourcePreview, db: Session = Depends(get_db)
     if db.query(models.PortfolioSource).filter_by(user_uid=auth.uid).count() >= 20:
         raise HTTPException(409, "Keep up to 20 source snapshots. Remove an older source before importing another.")
     try:
-        result = github_import.public_preview(payload.url)
+        result = github_import.connected_preview(payload.url, github_connection.access_token(db, auth.uid)) if payload.use_connected_github else github_import.public_preview(payload.url)
+    except HTTPException:
+        raise
     except Exception as exc:
         # Never return provider payloads or credentials in a client error.
         if isinstance(exc, github_import.ImportFailure):
@@ -248,4 +250,4 @@ def export_account(db: Session = Depends(get_db), auth: AuthUser = Depends(get_c
 
 @router.get("/capabilities")
 def capabilities():
-    return {"embedding_provider": embeddings.settings.embedding_provider, "embedding_version": embeddings.version(), "private_github": False, "linkedin_automation": False, "generation": "extractive-reviewed-statements", "source_limit": 20}
+    return {"embedding_provider": embeddings.settings.embedding_provider, "embedding_version": embeddings.version(), "private_github": github_connection.configured(), "linkedin_automation": False, "generation": "extractive-reviewed-statements", "source_limit": 20}

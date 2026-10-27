@@ -51,3 +51,7 @@ Documents have a logical family, immutable version number, content hash, and evi
 - The synthetic benchmark is an engineering regression fixture, not evidence of real-world hiring outcomes. See `evaluations/retrieval-v1.json`.
 
 The next justified architecture changes require measurement: broader human-labeled relevance data, semantic contradiction checks, optional reranking, and ANN indexing only after workload benchmarks. Do not add these merely to increase the technology count.
+
+## Optional private repository authorization
+
+A GitHub App user connection adds selected-private-repository reads using PKCE, owner-bound expiring single-use state and encrypted expiring credentials. No refresh token or broad OAuth repo scope is retained. Public previews never use a user's private connection implicitly. GitHub enforces the intersection of user/App access, and permission denial stops the connected import. Source excerpts retain the existing per-account ownership and deletion lifecycle. Disconnect deletes credentials, not previously imported excerpts. See GITHUB-APP.md for operator activation and live acceptance checks.

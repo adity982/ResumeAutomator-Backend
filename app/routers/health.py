@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
+import os
 
 from ..database import SessionLocal
 from ..middleware import api_metrics
@@ -10,7 +11,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health/live")
 def live():
-    return {"status": "ok"}
+    return {"status": "ok", "revision": os.getenv("RENDER_GIT_COMMIT") or os.getenv("RELEASE_SHA") or "local"}
 
 
 @router.get("/health/ready")

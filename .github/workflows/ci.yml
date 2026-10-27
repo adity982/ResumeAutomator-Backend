@@ -53,3 +53,7 @@ jobs:
       - run: alembic upgrade 0002_market_features
       - run: alembic upgrade head
       - run: pytest -q
+      - name: Prove synthetic PostgreSQL backup and restore
+        run: bash scripts/verify_postgres_restore.sh
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}

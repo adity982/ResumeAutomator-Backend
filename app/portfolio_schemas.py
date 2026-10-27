@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class SourcePreview(BaseModel):
     url: str = Field(max_length=500)
+    use_connected_github: bool = False
 
 
 class SourceImport(BaseModel):

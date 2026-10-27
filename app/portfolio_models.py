@@ -22,6 +22,7 @@ class PortfolioSource(Base):
     source_url = Column(String(2048), nullable=False)
     description = Column(Text, default="", nullable=False)
     is_fork = Column(Boolean, default=False, nullable=False)
+    is_private = Column(Boolean, default=False, nullable=False)
     status = Column(String(32), default="preview", nullable=False)
     contribution = Column(Text, default="", nullable=False)
     relationship = Column(String(32), default="unconfirmed", nullable=False)
@@ -117,3 +118,19 @@ class UsageWindow(Base):
     key = Column(String(64), primary_key=True)
     count = Column(Integer, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class GitHubConnection(Base):
+    __tablename__ = "github_connections"
+    user_uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True)
+    login = Column(String(100), nullable=False)
+    token_ciphertext = Column(Text, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class GitHubAuthorization(Base):
+    __tablename__ = "github_authorizations"
+    state_hash = Column(String(64), primary_key=True)
+    user_uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False, unique=True)
+    verifier_ciphertext = Column(Text, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)

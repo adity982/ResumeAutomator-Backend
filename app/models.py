@@ -199,3 +199,4 @@ class FollowUpTask(Base):
 
 # Register separately maintained portfolio tables with the same migration metadata.
 from .portfolio_models import Contact, EvidenceChunk, IngestionJob, PortfolioSource, RetrievalRun, PilotFeedback, WorkspaceDraft  # noqa: E402,F401
+from .portfolio_models import GitHubConnection, GitHubAuthorization  # noqa: E402,F401

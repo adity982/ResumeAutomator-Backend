@@ -49,10 +49,18 @@ def priority(path: str):
 
 
 def public_preview(url: str) -> dict:
+    return _preview(url, settings.github_token, allow_private=False)
+
+
+def connected_preview(url: str, token: str) -> dict:
+    return _preview(url, token, allow_private=True)
+
+
+def _preview(url: str, token: str, *, allow_private: bool) -> dict:
     repository = repository_name(url)
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "ResumeAutomator"}
-    if settings.github_token:
-        headers["Authorization"] = f"Bearer {settings.github_token}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     # API URLs are constructed exclusively from validated repository names and paths.
     with httpx.Client(base_url="https://api.github.com", headers=headers, timeout=15, follow_redirects=False, trust_env=False) as client:
         deadline = time.monotonic() + 70
@@ -62,7 +70,7 @@ def public_preview(url: str) -> dict:
                 raise ImportFailure("Import preview timed out. Retry with a smaller repository.")
             with client.stream("GET", path, timeout=min(15, remaining)) as response:
                 if response.status_code in {403, 429}:
-                    raise ImportFailure("GitHub rate limit reached. Retry later; no private access is requested.")
+                    raise ImportFailure("GitHub rate limit or repository permission denied. Check access or retry later.")
                 if response.status_code != 200:
                     raise ImportFailure("GitHub could not read this public repository or file.")
                 chunks, size = [], 0
@@ -77,7 +85,7 @@ def public_preview(url: str) -> dict:
                 return json.loads(b"".join(chunks))
 
         metadata = get(f"/repos/{repository}")
-        if metadata.get("private"):
+        if metadata.get("private") and not allow_private:
             raise ImportFailure("Only public repositories are supported. Private repository access is not enabled.")
         commit = get(f"/repos/{repository}/commits/{quote(metadata['default_branch'], safe='')}")["sha"]
         tree = get(f"/repos/{repository}/git/trees/{commit}?recursive=1")
@@ -104,7 +112,7 @@ def public_preview(url: str) -> dict:
             files.append({"path": path, "content": text, "bytes": len(raw), "hash": hashlib.sha256(raw).hexdigest()})
         if not files:
             raise ImportFailure("No supported, bounded text files were found.")
-        return {"repository": repository, "commit_sha": commit, "source_url": f"https://github.com/{repository}", "description": (metadata.get("description") or "")[:1000], "is_fork": bool(metadata.get("fork")), "files": files}
+        return {"repository": repository, "commit_sha": commit, "source_url": f"https://github.com/{repository}", "description": (metadata.get("description") or "")[:1000], "is_fork": bool(metadata.get("fork")), "is_private": bool(metadata.get("private")), "files": files}
 
 
 def chunk_file(path: str, content: str) -> list[dict]:

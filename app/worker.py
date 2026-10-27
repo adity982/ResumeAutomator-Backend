@@ -92,6 +92,9 @@ def run_once(session_factory=SessionLocal) -> bool:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    from .config import settings
+    settings.validate()
+    embeddings.embed(["Worker startup warm-up"])
     while True:
         if not run_once():
             time.sleep(2)

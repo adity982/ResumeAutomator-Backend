@@ -15,8 +15,10 @@ JOB = """We are hiring a Python developer to build FastAPI services. The role re
 cloud deployment, communication, testing, and production monitoring experience."""
 
 
-def test_health_and_authentication(client):
-    assert client.get("/health/live").json() == {"status": "ok"}
+def test_health_and_authentication(client, monkeypatch):
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("RELEASE_SHA", "test-release")
+    assert client.get("/health/live").json() == {"status": "ok", "revision": "test-release"}
     response = client.get("/api/v1/jobs")
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "http_401"

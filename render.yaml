@@ -1,0 +1,22 @@
+# Review plans and existing service ownership before applying. This creates no resources by itself.
+# Attach the SAME encrypted environment group to API and worker in Render.
+services:
+  - type: web
+    name: resume-automator-api
+    runtime: docker
+    plan: starter
+    branch: main
+    autoDeployTrigger: 'off'
+    healthCheckPath: /health/ready
+    preDeployCommand: python -m alembic upgrade head && python scripts/release_preflight.py
+    envVars:
+      - fromGroup: resume-automator-production
+  - type: worker
+    name: resume-automator-worker
+    runtime: docker
+    plan: starter
+    branch: main
+    autoDeployTrigger: 'off'
+    dockerCommand: python -m app.worker
+    envVars:
+      - fromGroup: resume-automator-production

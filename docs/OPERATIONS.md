@@ -57,3 +57,7 @@ python -m evaluations.run --output evaluation-results/retrieval.json
 Set `EMBEDDING_PROVIDER=fastembed` for the learned-vector benchmark. Model/version and limitations are included in the result. Never present the small synthetic fixture as a production load test or a user study.
 
 The frontend's `Application journey` workflow checks out the matching backend feature branch when available, falling back to main. Its dedicated `scripts/e2e_server.py` always uses a named local test database and synthetic evidence; do not use this server for production.
+
+## Release artifacts
+
+See RELEASE.md for the Render API/worker blueprint, actual-backup restore procedure, release probes, rollback, monitoring and retention configuration. See GITHUB-APP.md for selected private repository authorization. Private access remains unavailable until the operator supplies a registered App and encryption settings. Run scripts/release_preflight.py inside the intended production environment before traffic promotion.

@@ -34,6 +34,11 @@ class Settings:
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
     model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", ".cache/models")
     github_token: str = os.getenv("GITHUB_PUBLIC_TOKEN", "")
+    github_client_id: str = os.getenv("GITHUB_APP_CLIENT_ID", "")
+    github_client_secret: str = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
+    github_redirect_uri: str = os.getenv("GITHUB_REDIRECT_URI", "")
+    github_app_slug: str = os.getenv("GITHUB_APP_SLUG", "")
+    connection_encryption_key: str = os.getenv("CONNECTION_ENCRYPTION_KEY", "")
     worker_lease_seconds: int = int(os.getenv("WORKER_LEASE_SECONDS", "300"))
 
     @property
