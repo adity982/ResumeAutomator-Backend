@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.middleware import RateLimitMiddleware, RequestContextMiddleware, BodyLimitMiddleware
-from app.routers import core, health, workflows, portfolio, connections
+from app.routers import core, health, workflows, portfolio, connections, productivity
 
 
 def create_app() -> FastAPI:
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(workflows.router)
     app.include_router(portfolio.router)
     app.include_router(connections.router)
+    app.include_router(productivity.router)
     return app
 
 
