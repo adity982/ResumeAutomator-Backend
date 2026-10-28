@@ -3,6 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
@@ -26,6 +30,16 @@ class Settings:
     ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "30"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
     docs_enabled: bool = _as_bool(os.getenv("DOCS_ENABLED"), True)
+    embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "lexical").lower()
+    embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", ".cache/models")
+    github_token: str = os.getenv("GITHUB_PUBLIC_TOKEN", "")
+    github_client_id: str = os.getenv("GITHUB_APP_CLIENT_ID", "")
+    github_client_secret: str = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
+    github_redirect_uri: str = os.getenv("GITHUB_REDIRECT_URI", "")
+    github_app_slug: str = os.getenv("GITHUB_APP_SLUG", "")
+    connection_encryption_key: str = os.getenv("CONNECTION_ENCRYPTION_KEY", "")
+    worker_lease_seconds: int = int(os.getenv("WORKER_LEASE_SECONDS", "300"))
 
     @property
     def cors_origins(self) -> list[str]:
@@ -39,6 +53,8 @@ class Settings:
             raise RuntimeError("Development authentication is forbidden in production.")
         if self.auth_mode == "firebase" and not self.firebase_project_id:
             raise RuntimeError("FIREBASE_PROJECT_ID is required when AUTH_MODE=firebase.")
+        if self.embedding_provider not in {"lexical", "fastembed"}:
+            raise RuntimeError("EMBEDDING_PROVIDER must be lexical or fastembed.")
 
 
 settings = Settings()

@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MODEL_CACHE_DIR=/models EMBEDDING_PROVIDER=fastembed
+COPY requirements.txt requirements-rag.txt ./
+RUN pip install --no-cache-dir -r requirements-rag.txt && useradd --create-home resume && mkdir /models && chown resume /models
+COPY --chown=resume:resume . .
+USER resume
+CMD ["python", "-m", "app.runtime"]

@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.middleware import RateLimitMiddleware, RequestContextMiddleware
-from app.routers import core, health, workflows
+from app.middleware import RateLimitMiddleware, RequestContextMiddleware, BodyLimitMiddleware
+from app.routers import core, health, workflows, portfolio, connections, productivity
 
 
 def create_app() -> FastAPI:
@@ -21,15 +21,16 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.docs_enabled else None,
         redoc_url="/redoc" if settings.docs_enabled else None,
     )
+    app.add_middleware(RateLimitMiddleware, limit_per_minute=settings.rate_limit_per_minute)
+    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_upload_bytes + 65536)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
         expose_headers=["Content-Disposition", "X-Request-ID"],
     )
-    app.add_middleware(RateLimitMiddleware, limit_per_minute=settings.rate_limit_per_minute)
     app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(HTTPException)
@@ -51,6 +52,9 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(core.router)
     app.include_router(workflows.router)
+    app.include_router(portfolio.router)
+    app.include_router(connections.router)
+    app.include_router(productivity.router)
     return app
 
 

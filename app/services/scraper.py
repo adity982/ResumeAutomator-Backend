@@ -84,7 +84,7 @@ def _blocked_ip(address: str) -> bool:
     )
 
 
-async def validate_public_url(raw_url: str) -> str:
+async def resolve_public_url(raw_url: str) -> tuple[str, set[str]]:
     normalized = normalize_url(raw_url)
     hostname = urlsplit(normalized).hostname
     if hostname in {"localhost", "metadata.google.internal"} or hostname.endswith(".localhost"):
@@ -96,7 +96,21 @@ async def validate_public_url(raw_url: str) -> str:
     addresses = {item[4][0] for item in infos}
     if not addresses or any(_blocked_ip(address) for address in addresses):
         raise UnsafeURL("The destination resolves to a blocked network.")
+    return normalized, addresses
+
+
+async def validate_public_url(raw_url: str) -> str:
+    normalized, _ = await resolve_public_url(raw_url)
     return normalized
+
+
+async def pinned_request(raw_url: str):
+    normalized, addresses = await resolve_public_url(raw_url)
+    original = httpx.URL(normalized)
+    address = sorted(addresses, key=lambda ip: (":" in ip, ip))[0]
+    # Connect to the validated address, while keeping Host and TLS verification
+    # bound to the original hostname. DNS is never repeated by the transport.
+    return original.copy_with(host=address), original.netloc.decode("ascii"), original.host
 
 
 async def scrape_job(raw_url: str) -> tuple[dict, bool]:
@@ -105,29 +119,34 @@ async def scrape_job(raw_url: str) -> tuple[dict, bool]:
     if cached is not None:
         return cached, True
 
-    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=0)
     timeout = httpx.Timeout(12.0, connect=5.0)
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; ResumeAutomator/1.0; +https://github.com/adity982)",
         "Accept": "text/html,application/xhtml+xml,text/plain;q=0.8",
     }
-    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=False, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=False, headers=headers, trust_env=False) as client:
         for _ in range(4):
-            response = await client.get(current_url)
-            if response.status_code in {301, 302, 303, 307, 308}:
-                location = response.headers.get("location")
-                if not location:
-                    raise UnsafeURL("Redirect response did not include a destination.")
-                current_url = await validate_public_url(urljoin(current_url, location))
-                continue
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if not any(kind in content_type for kind in ("text/html", "application/xhtml+xml", "text/plain")):
-                raise UnsafeURL("Destination did not return readable HTML or text.")
-            body = response.content
-            if len(body) > 2_000_000:
-                raise UnsafeURL("Destination response exceeded the 2 MB limit.")
-            break
+            target, host_header, tls_hostname = await pinned_request(current_url)
+            async with client.stream("GET", target, headers={"Host": host_header}, extensions={"sni_hostname": tls_hostname}) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise UnsafeURL("Redirect response did not include a destination.")
+                    current_url = await validate_public_url(urljoin(current_url, location))
+                    continue
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                if not any(kind in content_type for kind in ("text/html", "application/xhtml+xml", "text/plain")):
+                    raise UnsafeURL("Destination did not return readable HTML or text.")
+                chunks, size = [], 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > 2_000_000:
+                        raise UnsafeURL("Destination response exceeded the 2 MB limit.")
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+                break
         else:
             raise UnsafeURL("Too many redirects.")
 

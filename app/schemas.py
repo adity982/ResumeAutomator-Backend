@@ -77,6 +77,7 @@ class DocumentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=50_000)
     template: Literal["standard", "modern", "executive", "minimalist", "creative"] = "standard"
     approved: bool = False
+    evidence_snapshot: list[int] = Field(default_factory=list, max_length=100)
 
 
 class DocumentRead(ORMModel):
@@ -90,6 +91,8 @@ class DocumentRead(ORMModel):
     template: str
     version: int
     approved: bool
+    content_hash: str
+    evidence_snapshot: list[dict[str, Any]]
     created_at: dt.datetime
 
 
@@ -107,7 +110,7 @@ class Dimension(BaseModel):
     score: float = Field(ge=0, le=100)
     definition: str
     evidence: list[str] = Field(default_factory=list, max_length=10)
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class GapAction(BaseModel):
@@ -117,7 +120,7 @@ class GapAction(BaseModel):
     jd_evidence: str
     resume_evidence: str | None = None
     suggestion: str
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class AnalysisRequest(BaseModel):
@@ -168,6 +171,7 @@ class BatchAnalysisItem(BaseModel):
 
 class TailorRequest(AnalysisRequest):
     confirmed_facts: list[str] = Field(default_factory=list, max_length=100)
+    evidence_ids: list[int] = Field(default_factory=list, max_length=20)
 
 
 class TailorResult(BaseModel):
@@ -175,6 +179,7 @@ class TailorResult(BaseModel):
     tailored: str
     added_phrases: list[str]
     warnings: list[str]
+    citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CoverLetterRequest(AnalysisRequest):
@@ -187,6 +192,7 @@ class GeneratedText(BaseModel):
 
 
 ApplicationStage = Literal["saved", "applied", "interview", "offer", "closed"]
+ApplicationOutcome = Literal["", "rejected", "withdrawn", "expired", "accepted"]
 
 
 class ApplicationCreate(BaseModel):
@@ -199,6 +205,7 @@ class ApplicationCreate(BaseModel):
     notes: str = Field(default="", max_length=10_000)
     resume_document_id: int | None = None
     cover_letter_document_id: int | None = None
+    outcome: ApplicationOutcome = ""
 
 
 class ApplicationUpdate(BaseModel):
@@ -210,6 +217,7 @@ class ApplicationUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=10_000)
     resume_document_id: int | None = None
     cover_letter_document_id: int | None = None
+    outcome: ApplicationOutcome | None = None
 
 
 class ApplicationRead(ORMModel):
@@ -225,6 +233,7 @@ class ApplicationRead(ORMModel):
     cover_letter_document_id: int | None
     created_at: dt.datetime
     updated_at: dt.datetime
+    outcome: str
 
 
 class InterviewCreate(BaseModel):
@@ -262,6 +271,7 @@ class OutreachRequest(BaseModel):
     company: str = Field(default="", max_length=240)
     tone: Literal["professional", "warm", "concise"] = "professional"
     call_to_action: str = Field(default="a brief 10-minute conversation", max_length=240)
+    contact_id: int | None = None
 
 
 class OutreachRead(ORMModel):
@@ -273,6 +283,16 @@ class OutreachRead(ORMModel):
     tone: str
     variants: dict[str, Any]
     created_at: dt.datetime
+    contact_id: int | None
+    status: str
+    revision: int
+    updated_at: dt.datetime
+
+
+class OutreachUpdate(BaseModel):
+    revision: int = Field(ge=1)
+    variants: dict[str, Any] | None = None
+    status: Literal["draft", "sent", "replied", "closed"] | None = None
 
 
 class SearchPreferences(BaseModel):

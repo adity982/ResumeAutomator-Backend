@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from starlette.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -12,8 +13,8 @@ from .schemas import AuthUser
 bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+def verify_user(
+    credentials: HTTPAuthorizationCredentials | None,
 ) -> AuthUser:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
@@ -38,6 +39,13 @@ async def get_current_user(
 
     uid = payload.get("sub") or payload.get("user_id")
     email = payload.get("email")
-    if not uid or not email or payload.get("email_verified") is False:
+    if not uid or not email or payload.get("email_verified") is not True:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Verified email identity required.")
     return AuthUser(uid=str(uid)[:128], email=str(email)[:320])
+
+
+async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> AuthUser:
+    from .services.usage import consume
+    user = await run_in_threadpool(verify_user, credentials)
+    await run_in_threadpool(consume, user.uid, request.url.path, request.method)
+    return user

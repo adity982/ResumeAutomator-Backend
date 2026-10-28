@@ -2,7 +2,8 @@ import os
 
 os.environ["APP_ENV"] = "test"
 os.environ["AUTH_MODE"] = "development"
-os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", "sqlite://")
+os.environ["EMBEDDING_PROVIDER"] = "lexical"
 os.environ["RATE_LIMIT_PER_MINUTE"] = "1000"
 
 import pytest
